@@ -16,7 +16,7 @@ SCRIPT_PATH=$(realpath "$0")
 header() {
     clear
     echo -e "\e[36m┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\e[0m"
-    echo -e "\e[36m┃\e[0m \e[1;37m        NGINX MANAGER & SSL AUTO-CONFIGURATOR         \e[0m \e[36m┃\e[0m"
+    echo -e "\e[36m┃\e[0m \e[1;37m        NGINX REVERSE PROXY MANAGER (v2.0)            \e[0m \e[36m┃\e[0m"
     echo -e "\e[36m┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\e[0m"
 }
 
@@ -27,18 +27,17 @@ install_nginx_ssl() {
     read -e -p "Enter Domain (e.g., p1.fastabotics.online): " DOMAIN
     
     echo -e "\e[34mInstalling Nginx & Dependencies...\e[0m"
-    apt update && apt install nginx curl ufw -y
+    apt update && apt install nginx curl ufw socat -y
     
-    # Ensure directories exist
     mkdir -p "$NGINX_PROXY_DIR/$DOMAIN"
     
-    # Create Base Nginx Config (Crucial to prevent empty files)
+    # Base Nginx Config
     cat > "/etc/nginx/sites-available/$DOMAIN" <<EOF
 server {
     listen 80;
     server_name $DOMAIN;
+    client_max_body_size 0;
 
-    # Load custom paths from proxy.d
     include $NGINX_PROXY_DIR/$DOMAIN/*.conf;
 
     location / {
@@ -48,7 +47,6 @@ server {
 }
 EOF
 
-    # Enable the site
     ln -sf "/etc/nginx/sites-available/$DOMAIN" "/etc/nginx/sites-enabled/"
     nginx -t && systemctl reload nginx
 
@@ -68,7 +66,6 @@ EOF
             --fullchain-file /etc/nginx/ssl/$DOMAIN.cer \
             --reloadcmd "systemctl reload nginx"
         
-        # Update config to HTTPS for Acme
         cat > "/etc/nginx/sites-available/$DOMAIN" <<EOF
 server { listen 80; server_name $DOMAIN; return 301 https://\$host\$request_uri; }
 server {
@@ -76,7 +73,10 @@ server {
     server_name $DOMAIN;
     ssl_certificate /etc/nginx/ssl/$DOMAIN.cer;
     ssl_certificate_key /etc/nginx/ssl/$DOMAIN.key;
+    client_max_body_size 0;
+
     include $NGINX_PROXY_DIR/$DOMAIN/*.conf;
+
     location / { return 200 "Secure SSL Active."; add_header Content-Type text/plain; }
 }
 EOF
@@ -97,11 +97,17 @@ add_proxy() {
     fi
     
     read -e -p "Enter Internal Port (e.g., 8080): " PORT
-    read -e -p "Enter Path (e.g., panel): " PPATH
-    PPATH="${PPATH#/}" # Remove leading slash
+    read -e -p "Enter Path (e.g., mypanel): " PPATH
+    PPATH="${PPATH#/}"
+    PPATH="${PPATH%/}"
 
-    # Create the proxy path config
+    # Create Proxy Config with 404 fix and WebSocket support
     cat > "$NGINX_PROXY_DIR/$DOMAIN/$PPATH.conf" <<EOF
+location /$PPATH {
+    # Fix 404 by redirecting to trailing slash
+    rewrite ^/$PPATH$ /$PPATH/ permanent;
+}
+
 location /$PPATH/ {
     proxy_pass http://127.0.0.1:$PORT/;
     proxy_http_version 1.1;
@@ -111,10 +117,16 @@ location /$PPATH/ {
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto \$scheme;
+    
+    # Optimization for File Hosting & Panels
+    proxy_buffering off;
+    proxy_redirect off;
+    client_max_body_size 0;
 }
 EOF
     nginx -t && systemctl reload nginx
-    echo -e "\e[32m✔ Success: https://$DOMAIN/$PPATH/ is now pointing to port $PORT\e[0m"
+    echo -e "\e[32m✔ Success: https://$DOMAIN/$PPATH/ -> Port $PORT\e[0m"
+    echo -e "\e[1;31mNOTE: If using x-ui, set 'Root Path' to /$PPATH in panel settings!\e[0m"
     read -p "Press Enter to continue..." 
 }
 
@@ -129,19 +141,11 @@ list_proxies() {
         DOMAIN=$(basename "$d")
         echo -e "\e[1;32m● Domain: $DOMAIN\e[0m"
         
-        # Show SSL Paths
-        if [ -d "/etc/letsencrypt/live/$DOMAIN" ]; then
-            echo -e "   \e[90mSSL (Certbot): /etc/letsencrypt/live/$DOMAIN/\e[0m"
-        elif [ -f "/etc/nginx/ssl/$DOMAIN.key" ]; then
-            echo -e "   \e[90mSSL (Acme): /etc/nginx/ssl/$DOMAIN.key\e[0m"
-        fi
-
-        # List paths
         shopt -s nullglob
         for conf in "$d"/*.conf; do
             P=$(basename "$conf" .conf)
             PORT=$(grep "proxy_pass" "$conf" | sed -E 's/.*:([0-9]+)\/.*/\1/')
-            echo -e "   ➜ Path: /$P  -->  Internal Port: $PORT"
+            echo -e "   ➜ https://$DOMAIN/$P/  -->  Local Port: $PORT"
         done
         shopt -u nullglob
         echo "----------------------------------------------------"
@@ -174,7 +178,7 @@ delete_path() {
 # --- 5) Firewall Management ---
 manage_ufw() {
     header
-    echo -e "1) Open 80, 443, 22\n2) Block a Port\n3) Disable Firewall"
+    echo -e "1) Open 80, 443, 22 (Recommended)\n2) Block a Port\n3) Disable Firewall"
     read -p "Select: " fchoice
     case $fchoice in
         1) ufw allow 80,443,22/tcp && ufw --force enable ;;
@@ -183,19 +187,18 @@ manage_ufw() {
     esac
 }
 
-# --- 6) FULL UNINSTALL (Self-Delete) ---
+# --- 6) FULL UNINSTALL ---
 uninstall_all() {
     header
-    echo -e "\e[1;31mWARNING: This will remove Nginx, SSL, and this Script file.\e[0m"
+    echo -e "\e[1;31mWARNING: This will remove Nginx and all SSL configs.\e[0m"
     read -p "Confirm Uninstall? (y/n): " confirm
     if [ "$confirm" == "y" ]; then
         systemctl stop nginx
         apt purge nginx certbot -y
         apt autoremove -y
         rm -rf /etc/nginx/proxy.d /etc/nginx/ssl /etc/letsencrypt ~/.acme.sh
-        echo -e "\e[32m✔ System Cleaned. Deleting script and exiting...\e[0m"
+        echo -e "\e[32m✔ System Cleaned.\e[0m"
         sleep 2
-        rm -- "$SCRIPT_PATH"
         exit 0
     fi
 }
@@ -203,12 +206,12 @@ uninstall_all() {
 # --- Main Loop ---
 while true; do
     header
-    echo -e "1) Install Nginx & SSL (Step 1)"
-    echo -e "2) Add Proxy Path (Step 2)"
-    echo -e "3) List All Proxies & Keys"
+    echo -e "1) Setup Domain & SSL"
+    echo -e "2) Add Proxy Path (x-ui, FileHost, etc.)"
+    echo -e "3) List Active Proxies"
     echo -e "4) Delete a Specific Path"
-    echo -e "5) Firewall (UFW)"
-    echo -e "6) FULL UNINSTALL (Self-Delete)"
+    echo -e "5) Firewall (UFW) Settings"
+    echo -e "6) FULL UNINSTALL"
     echo -e "7) Exit"
     echo -e "\e[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\e[0m"
     read -p " Option [1-7]: " opt
