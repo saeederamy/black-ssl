@@ -1,32 +1,42 @@
 #!/bin/bash
 
-# بررسی دسترسی Root
+# --- بررسی دسترسی Root ---
 if [ "$EUID" -ne 0 ]; then
   echo -e "\e[31mPlease run this script as root.\e[0m"
   exit 1
 fi
 
+# --- نصب خودکار به عنوان دستور سیستمی ---
+SCRIPT_PATH=$(realpath "$0")
+COMMAND_PATH="/usr/local/bin/auto-ssl"
+
+if [[ "$SCRIPT_PATH" != "$COMMAND_PATH" ]]; then
+    echo -e "\e[34mInstalling 'auto-ssl' as a global command...\e[0m"
+    cp "$SCRIPT_PATH" "$COMMAND_PATH"
+    chmod +x "$COMMAND_PATH"
+    ln -sf "$COMMAND_PATH" "/usr/bin/auto-ssl"
+    echo -e "\e[32m✔ Done! From now on, just type 'auto-ssl' anywhere in your terminal.\e[0m"
+    sleep 2
+    # اجرای نسخه نصب شده و خروج از فایل فعلی
+    exec "$COMMAND_PATH" "$@"
+fi
+
 NGINX_PROXY_DIR="/etc/nginx/proxy.d"
 
-# تابع نصب انجینکس و SSL
+# --- تابع نصب انجینکس و SSL ---
 function install_nginx_ssl() {
     read -p "Enter Domain (e.g., example.com): " DOMAIN
     
     echo -e "\e[34mInstalling Nginx...\e[0m"
     apt update && apt install nginx curl -y
-    
     mkdir -p "$NGINX_PROXY_DIR/$DOMAIN"
     
-    # ایجاد کانفیگ پایه انجینکس (بدون Location / پیش‌فرض تا تداخل ایجاد نشود)
     cat > /etc/nginx/sites-available/$DOMAIN <<EOF
 server {
     listen 80;
     server_name $DOMAIN;
-    
-    # مسیر فایل‌های پروکسی
     include $NGINX_PROXY_DIR/$DOMAIN/*.conf;
     
-    # در صورتی که کاربری پروکسی روت نساخته باشد، این صفحه موقت نمایش داده می‌شود
     error_page 404 /custom_404.html;
     location = /custom_404.html {
         return 200 "Server is ready. Please add a proxy path.";
@@ -39,7 +49,7 @@ EOF
 
     echo "=============================="
     echo "Choose SSL Provider:"
-    echo "1) Certbot (Recommended - Auto configures Nginx)"
+    echo "1) Certbot (Recommended)"
     echo "2) Acme.sh"
     read -p "Choice (1 or 2): " ssl_choice
 
@@ -47,14 +57,12 @@ EOF
         echo -e "\e[34mInstalling Certbot...\e[0m"
         apt install certbot python3-certbot-nginx -y
         certbot --nginx -d $DOMAIN --non-interactive --agree-tos --register-unsafely-without-email
-    
     elif [ "$ssl_choice" == "2" ]; then
         echo -e "\e[34mInstalling Acme.sh...\e[0m"
         curl https://get.acme.sh | sh
         source ~/.bashrc
         ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
         ~/.acme.sh/acme.sh --issue -d $DOMAIN --nginx
-        
         mkdir -p /etc/nginx/ssl
         ~/.acme.sh/acme.sh --install-cert -d $DOMAIN \
             --key-file /etc/nginx/ssl/$DOMAIN.key \
@@ -62,69 +70,57 @@ EOF
             --reloadcmd "systemctl reload nginx"
             
         cat > /etc/nginx/sites-available/$DOMAIN <<EOF
-server {
-    listen 80;
-    server_name $DOMAIN;
-    return 301 https://\$host\$request_uri;
-}
-
+server { listen 80; server_name $DOMAIN; return 301 https://\$host\$request_uri; }
 server {
     listen 443 ssl;
     server_name $DOMAIN;
-
     ssl_certificate /etc/nginx/ssl/$DOMAIN.cer;
     ssl_certificate_key /etc/nginx/ssl/$DOMAIN.key;
-
     include $NGINX_PROXY_DIR/$DOMAIN/*.conf;
     
     error_page 404 /custom_404.html;
-    location = /custom_404.html {
-        return 200 "Secure Server is ready. Please add a proxy path.";
-        add_header Content-Type text/plain;
-    }
+    location = /custom_404.html { return 200 "Secure Server is ready."; add_header Content-Type text/plain; }
 }
 EOF
-    else
-        echo -e "\e[31mInvalid choice. Skipping SSL.\e[0m"
     fi
-    
     systemctl reload nginx
     echo -e "\e[32mNginx and SSL successfully configured for $DOMAIN!\e[0m"
+    sleep 2
 }
 
-# تابع اضافه کردن Reverse Proxy
+# --- تابع اضافه کردن Reverse Proxy با پشتیبانی Sub-Filter ---
 function add_proxy() {
     read -p "Enter Domain (e.g., example.com): " DOMAIN
     read -p "Enter Internal Port (e.g., 8080): " PORT
-    echo -e "\e[33mTip: Type '/' to proxy the entire domain (Recommended for panels), or type a path like 'panel'\e[0m"
+    echo -e "\e[33mTip: Type '/' for Root domain, or type a path like 'panel'\e[0m"
     read -p "Enter Path: " PPATH
     
     if [ ! -d "$NGINX_PROXY_DIR/$DOMAIN" ]; then
-        echo -e "\e[31mDomain configuration not found. Please setup domain first (Option 1).\e[0m"
-        return
+        echo -e "\e[31mDomain configuration not found. Setup domain first.\e[0m"
+        sleep 2; return
     fi
 
-    # پردازش هوشمند مسیر
-    PPATH="${PPATH#/}" # حذف اسلش اول اگر بود
-    PPATH="${PPATH%/}" # حذف اسلش آخر اگر بود
+    PPATH="${PPATH#/}" 
+    PPATH="${PPATH%/}" 
     
     if [ -z "$PPATH" ]; then
-        # اگر کاربر فقط اسلش زد یا خالی گذاشت (پروکسی روی کل دامنه)
-        LOC_BLOCK="/"
-        FILE_NAME="root"
-        PROXY_URL="http://127.0.0.1:$PORT" # برای روت اسلش آخر را برمیداریم
+        # پروکسی ریشه اصلی (بدون نیاز به Sub_Filter)
+        cat > "$NGINX_PROXY_DIR/$DOMAIN/root.conf" <<EOF
+location / {
+    proxy_pass http://127.0.0.1:$PORT;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+}
+EOF
         SUCCESS_URL="https://$DOMAIN/"
     else
-        # اگر کاربر مسیر وارد کرد (مثلاً panel)
-        LOC_BLOCK="/$PPATH/"
-        FILE_NAME="$PPATH"
-        PROXY_URL="http://127.0.0.1:$PORT/" # اسلش آخر برای مسیر الزامی است
-        SUCCESS_URL="https://$DOMAIN/$PPATH/"
-    fi
-    
-    cat > "$NGINX_PROXY_DIR/$DOMAIN/$FILE_NAME.conf" <<EOF
-location $LOC_BLOCK {
-    proxy_pass $PROXY_URL;
+        # پروکسی مسیر فرعی + اصلاح هوشمند آدرس‌ها برای پنل پایتون
+        cat > "$NGINX_PROXY_DIR/$DOMAIN/$PPATH.conf" <<EOF
+location /$PPATH/ {
+    proxy_pass http://127.0.0.1:$PORT/;
     proxy_http_version 1.1;
     proxy_set_header Upgrade \$http_upgrade;
     proxy_set_header Connection "upgrade";
@@ -132,60 +128,62 @@ location $LOC_BLOCK {
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto \$scheme;
+
+    # Rewrite URL for custom apps (Python, etc.)
+    proxy_set_header Accept-Encoding "";
+    sub_filter 'src="/' 'src="/$PPATH/';
+    sub_filter 'href="/' 'href="/$PPATH/';
+    sub_filter 'action="/' 'action="/$PPATH/';
+    sub_filter 'url("/' 'url("/$PPATH/';
+    sub_filter_once off;
+    sub_filter_types text/html text/css text/javascript application/javascript application/json;
 }
 EOF
-
+        SUCCESS_URL="https://$DOMAIN/$PPATH/"
+    fi
+    
     nginx -t && systemctl reload nginx
     if [ $? -eq 0 ]; then
         echo -e "\e[32mSuccess! Access your service at: $SUCCESS_URL\e[0m"
     else
-        echo -e "\e[31mNginx config test failed. Removing invalid config...\e[0m"
-        rm "$NGINX_PROXY_DIR/$DOMAIN/$FILE_NAME.conf"
+        echo -e "\e[31mConfig test failed. Removing invalid config...\e[0m"
+        rm "$NGINX_PROXY_DIR/$DOMAIN/${PPATH:-root}.conf"
     fi
+    sleep 2
 }
 
-# بقیه توابع (uninstall_all, remove_proxy, list_proxies و منو) دقیقاً مشابه کد خودتان است
+# --- توابع حذف و لیست کردن ---
 function uninstall_all() {
-    read -p "Are you sure you want to completely remove Nginx, Certbot, and Acme.sh? (y/n): " confirm
+    read -p "Are you sure you want to completely remove Nginx and this script? (y/n): " confirm
     if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
-        echo -e "\e[31mUninstalling everything...\e[0m"
         systemctl stop nginx
-        apt purge nginx nginx-common nginx-core certbot python3-certbot-nginx -y
+        apt purge nginx certbot python3-certbot-nginx -y
         apt autoremove -y
         rm -rf /etc/nginx /var/www/html /etc/letsencrypt ~/.acme.sh /root/.acme.sh
-        echo -e "\e[32mAll services and configurations have been completely removed.\e[0m"
-    else
-        echo -e "\e[34mUninstallation cancelled.\e[0m"
+        rm -f "/usr/local/bin/auto-ssl" "/usr/bin/auto-ssl"
+        echo -e "\e[32mAll services, configurations, and the auto-ssl command have been removed.\e[0m"
+        exit 0
     fi
 }
 
 function remove_proxy() {
     read -p "Enter Domain (e.g., example.com): " DOMAIN
-    read -p "Enter Path to remove (Type 'root' if you want to remove the main domain proxy): " PPATH
-    PPATH="${PPATH#/}"
-    PPATH="${PPATH%/}"
+    read -p "Enter Path to remove (Type 'root' for main domain proxy): " PPATH
+    PPATH="${PPATH#/}"; PPATH="${PPATH%/}"
+    [ -z "$PPATH" ] && PPATH="root"
     
-    if [ -z "$PPATH" ]; then
-        PPATH="root"
-    fi
-    
-    FILE_PATH="$NGINX_PROXY_DIR/$DOMAIN/$PPATH.conf"
-    
-    if [ -f "$FILE_PATH" ]; then
-        rm "$FILE_PATH"
+    if [ -f "$NGINX_PROXY_DIR/$DOMAIN/$PPATH.conf" ]; then
+        rm "$NGINX_PROXY_DIR/$DOMAIN/$PPATH.conf"
         nginx -t && systemctl reload nginx
-        echo -e "\e[32mPath successfully removed from reverse proxy.\e[0m"
+        echo -e "\e[32mPath successfully removed.\e[0m"
     else
         echo -e "\e[31mPath configuration not found!\e[0m"
     fi
+    sleep 2
 }
 
 function list_proxies() {
     echo -e "\e[33m=== Configured Proxies ===\e[0m"
-    if [ ! -d "$NGINX_PROXY_DIR" ]; then
-        echo -e "\e[31mNo proxy configurations found.\e[0m"
-        return
-    fi
     for domain_path in "$NGINX_PROXY_DIR"/*; do
         if [ -d "$domain_path" ]; then
             DOMAIN=$(basename "$domain_path")
@@ -209,14 +207,16 @@ function list_proxies() {
         fi
     done
     echo "=========================="
+    read -p "Press Enter to continue..."
 }
 
+# --- حلقه اصلی منو ---
 while true; do
-    echo ""
+    clear
     echo -e "\e[36m=========================================\e[0m"
     echo "  Auto Nginx & SSL Reverse Proxy Manager   "
     echo -e "\e[36m=========================================\e[0m"
-    echo "1) Install Nginx & Get SSL (Certbot/Acme)"
+    echo "1) Install Nginx & Get SSL"
     echo "2) Add Reverse Proxy (Port -> Path)"
     echo "3) Remove All (Nginx, SSL, Configs)"
     echo "4) Remove a Specific Proxy Path"
@@ -231,7 +231,7 @@ while true; do
         3) uninstall_all ;;
         4) remove_proxy ;;
         5) list_proxies ;;
-        6) echo "Exiting..."; exit 0 ;;
-        *) echo -e "\e[31mInvalid option. Please try again.\e[0m" ;;
+        6) clear; exit 0 ;;
+        *) echo -e "\e[31mInvalid option.\e[0m"; sleep 1 ;;
     esac
 done
