@@ -101,13 +101,14 @@ EOF
     elif [ "$ssl_choice" == "2" ]; then
         echo -e "${C_BLUE}❖ Installing Acme.sh...${C_RESET}"
         ACME_URL="https://""get.acme.sh"
-        curl "$ACME_URL" | sh
+        curl -s "$ACME_URL" | sh
         
         echo -e "${C_BLUE}❖ Registering account and requesting SSL via ZeroSSL...${C_RESET}"
         ~/.acme.sh/acme.sh --register-account -m "admin@$DOMAIN" --server zerossl
         ~/.acme.sh/acme.sh --set-default-ca --server zerossl
         
-        if ~/.acme.sh/acme.sh --issue -d $DOMAIN --nginx; then
+        # Explicitly force zerossl to override any cached Let's Encrypt configs for this domain
+        if ~/.acme.sh/acme.sh --issue -d $DOMAIN --nginx --server zerossl --force; then
             mkdir -p /etc/nginx/ssl
             ~/.acme.sh/acme.sh --install-cert -d $DOMAIN \
                 --key-file /etc/nginx/ssl/$DOMAIN.key \
