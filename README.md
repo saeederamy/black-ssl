@@ -51,4 +51,24 @@ If you are using **Mode 2 (X-UI Panel)** to host your panel on a sub-path (e.g.,
 * Ubuntu 20.04 / 22.04 / 24.04
 * Debian 11 / 12
 
+## 💖 Support the Project
+
+If this tool has helped you manage your Windows services more efficiently, consider supporting its development. Your donations help keep the project updated and maintained.
+
+### 💰 Crypto Donations
+
+You can support me by sending **Litecoin** or **TON** to the following addresses:
+
+| Asset | Wallet Address |
+| :--- | :--- |
+| **Litecoin (LTC)** | `ltc1qxhuvs6j0suvv50nqjsuujqlr3u4ekfmys2ydps` |
+| **TON Network** | `UQAHI_ySJ1HTTCkNxuBB93shfdhdec4LSgsd3iCOAZd5yGmc` |
+
+---
+
+### 🌟 Other Ways to Help
+* **Give a Star:** If you can't donate, simply giving this repository a ⭐ **Star** means a lot and helps others find this project.
+* **Feedback:** Open an issue if you encounter bugs or have suggestions for improvements.
+
+> **Note:** Please double-check the address before sending. Crypto transactions are irreversible. Thank you for your generosity!
 
