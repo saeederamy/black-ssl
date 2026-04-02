@@ -44,7 +44,7 @@ function install_nginx_ssl() {
     echo -e "${C_CYAN}│${C_RESET}         ${C_WHITE}Nginx & SSL Configuration${C_RESET}        ${C_CYAN}│${C_RESET}"
     echo -e "${C_CYAN}╰──────────────────────────────────────────╯${C_RESET}"
     
-    read -p "🔹 Enter Domain (e.g., example.com): " DOMAIN
+    read -ep "🔹 Enter Domain (e.g., example.com): " DOMAIN
     
     if ! command -v nginx &> /dev/null; then
         echo -e "${C_BLUE}❖ Installing Nginx...${C_RESET}"
@@ -83,7 +83,7 @@ EOF
     echo -e "  ${C_CYAN}2)${C_RESET} Acme.sh (Good for strict limits)"
     echo -e "  ${C_CYAN}3)${C_RESET} Manual SSL (e.g., Cloudflare Origin Certs)"
     echo -e "  ${C_CYAN}4)${C_RESET} Skip SSL (Already Installed)"
-    read -p "Choice (1/2/3/4): " ssl_choice
+    read -ep "Choice (1/2/3/4): " ssl_choice
 
     if [ "$ssl_choice" == "1" ]; then
         echo -e "${C_BLUE}❖ Installing Certbot...${C_RESET}"
@@ -116,8 +116,8 @@ EOF
     elif [ "$ssl_choice" == "3" ]; then
         echo -e "\n${C_BLUE}❖ Manual SSL Configuration${C_RESET}"
         echo -e "${C_YELLOW}Please upload your cert files to the server before proceeding.${C_RESET}"
-        read -p "Enter path to Certificate (.cer / .crt / .pem): " CERT_PATH
-        read -p "Enter path to Private Key (.key): " KEY_PATH
+        read -ep "Enter path to Certificate (.cer / .crt / .pem): " CERT_PATH
+        read -ep "Enter path to Private Key (.key): " KEY_PATH
 
         if [[ -f "$CERT_PATH" && -f "$KEY_PATH" ]]; then
             cat > /etc/nginx/sites-available/$DOMAIN <<EOF
@@ -168,10 +168,10 @@ function add_proxy() {
     fi
     echo -e "${C_CYAN}────────────────────────────────────────────${C_RESET}"
 
-    read -p "🔹 Enter Domain from list above (e.g., example.com): " DOMAIN
-    read -p "🔹 Enter Internal Port (e.g., 8080): " PORT
+    read -ep "🔹 Enter Domain from list above (e.g., example.com): " DOMAIN
+    read -ep "🔹 Enter Internal Port (e.g., 8080): " PORT
     echo -e "${C_YELLOW}Tip: Type '/' for Root domain, or type a path like 'panel'${C_RESET}"
-    read -p "🔹 Enter Path: " PPATH
+    read -ep "🔹 Enter Path: " PPATH
     
     if [ ! -d "$NGINX_PROXY_DIR/$DOMAIN" ]; then
         echo -e "${C_YELLOW}Directory missing. Creating it automatically...${C_RESET}"
@@ -273,12 +273,12 @@ function list_proxies() {
     grep -Rn "proxy_pass" /etc/nginx/sites-enabled/ 2>/dev/null | awk -F'[/:]' '{print "    ├─ Config: " $5 " ➔ " $NF}' | sed 's/proxy_pass//g; s/;//g' || echo -e "  ${C_YELLOW}None found.${C_RESET}"
 
     echo ""
-    read -p "Press Enter to return to menu..."
+    read -ep "Press Enter to return to menu..."
 }
 
 function remove_proxy() {
-    read -p "🔹 Enter Domain (e.g., example.com): " DOMAIN
-    read -p "🔹 Enter Path to remove (Type 'root' for main domain proxy): " PPATH
+    read -ep "🔹 Enter Domain (e.g., example.com): " DOMAIN
+    read -ep "🔹 Enter Path to remove (Type 'root' for main domain proxy): " PPATH
     PPATH="${PPATH#/}"; PPATH="${PPATH%/}"
     [ -z "$PPATH" ] && PPATH="root"
     
@@ -294,7 +294,7 @@ function remove_proxy() {
 
 function uninstall_all() {
     echo -e "\n${C_RED}⚠ WARNING: This will delete Nginx, all SSL certs, and configs!${C_RESET}"
-    read -p "Are you sure? (y/n): " confirm
+    read -ep "Are you sure? (y/n): " confirm
     if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
         systemctl stop nginx
         apt purge nginx certbot python3-certbot-nginx -y
@@ -323,7 +323,7 @@ while true; do
     echo -e "  ${C_RED}5${C_RESET} ${C_WHITE}➜${C_RESET} Danger: Remove All (Nginx, SSL, Configs)"
     echo -e "  ${C_CYAN}0${C_RESET} ${C_WHITE}➜${C_RESET} Exit"
     echo -e "${C_CYAN} ────────────────────────────────────────────────${C_RESET}"
-    read -p "  Select Option: " choice
+    read -ep "  Select Option: " choice
 
     case $choice in
         1) install_nginx_ssl ;;
