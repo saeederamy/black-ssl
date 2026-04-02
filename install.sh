@@ -84,7 +84,7 @@ EOF
 
     echo -e "\n${C_WHITE}Choose SSL Provider:${C_RESET}"
     echo -e "  ${C_CYAN}1)${C_RESET} Certbot (Recommended - *Requires port 80 to be open*)"
-    echo -e "  ${C_CYAN}2)${C_RESET} Acme.sh (Good for strict limits)"
+    echo -e "  ${C_CYAN}2)${C_RESET} Acme.sh (Uses ZeroSSL to bypass Let's Encrypt Limits)"
     echo -e "  ${C_CYAN}3)${C_RESET} Manual SSL (Upload your own certs)"
     echo -e "  ${C_CYAN}4)${C_RESET} Skip SSL (HTTP Only)"
     read -p "Choice (1/2/3/4): " ssl_choice
@@ -103,9 +103,9 @@ EOF
         ACME_URL="https://""get.acme.sh"
         curl "$ACME_URL" | sh
         
-        echo -e "${C_BLUE}❖ Registering account and requesting SSL...${C_RESET}"
-        ~/.acme.sh/acme.sh --register-account -m "admin@$DOMAIN" --server letsencrypt
-        ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
+        echo -e "${C_BLUE}❖ Registering account and requesting SSL via ZeroSSL...${C_RESET}"
+        ~/.acme.sh/acme.sh --register-account -m "admin@$DOMAIN" --server zerossl
+        ~/.acme.sh/acme.sh --set-default-ca --server zerossl
         
         if ~/.acme.sh/acme.sh --issue -d $DOMAIN --nginx; then
             mkdir -p /etc/nginx/ssl
@@ -124,7 +124,7 @@ server {
     include $NGINX_PROXY_DIR/$DOMAIN/*.conf;
 }
 EOF
-                echo -e "${C_GREEN}✔ Acme.sh SSL applied successfully!${C_RESET}"
+                echo -e "${C_GREEN}✔ Acme.sh (ZeroSSL) applied successfully!${C_RESET}"
             else
                 echo -e "${C_RED}✖ Acme.sh succeeded but cert files missing.${C_RESET}"
             fi
