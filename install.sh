@@ -25,7 +25,7 @@ if [[ "$0" != "$COMMAND_PATH" && "$(basename "$0")" != "auto-ssl" ]]; then
     echo -e "${C_BLUE}❖ Installing 'auto-ssl' as a global command...${C_RESET}"
     
     if ! cp "$0" "$COMMAND_PATH" 2>/dev/null; then
-        curl -Ls "https://raw.githubusercontent.com/saeederamy/Auto-SSL-Nginx/refs/heads/main/install.sh" -o "$COMMAND_PATH"
+        curl -Ls "[https://raw.githubusercontent.com/saeederamy/Auto-SSL-Nginx/refs/heads/main/install.sh](https://raw.githubusercontent.com/saeederamy/Auto-SSL-Nginx/refs/heads/main/install.sh)" -o "$COMMAND_PATH"
     fi
     
     chmod +x "$COMMAND_PATH"
@@ -100,7 +100,7 @@ EOF
     
     elif [ "$ssl_choice" == "2" ]; then
         echo -e "${C_BLUE}❖ Installing Acme.sh...${C_RESET}"
-        curl https://get.acme.sh | sh
+        curl [https://get.acme.sh](https://get.acme.sh) | sh
         source ~/.bashrc
         ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
         
@@ -278,7 +278,7 @@ function add_proxy() {
         # Root Proxy
         cat > "$NGINX_PROXY_DIR/$DOMAIN/root.conf" <<EOF
 location / {
-    proxy_pass http://127.0.0.1:$PORT;
+    proxy_pass [http://127.0.0.1](http://127.0.0.1):$PORT;
     proxy_http_version 1.1;
     proxy_set_header Upgrade \$http_upgrade;
     proxy_set_header Connection "upgrade";
@@ -289,14 +289,14 @@ EOF
         SUCCESS_URL="http(s)://$DOMAIN/"
     else
         echo -e "\n${C_WHITE}What type of application is this?${C_RESET}"
-        echo -e "  ${C_CYAN}1)${C_RESET} Black Hub / Custom App (Forces Nginx URL rewriting)"
+        echo -e "  ${C_CYAN}1)${C_RESET} Black Hub / Custom Python App (Forces Nginx URL rewriting)"
         echo -e "  ${C_CYAN}2)${C_RESET} X-UI Panel (Direct Pass - *Requires setting Base Path in X-UI*)"
         read -p "Choice (1 or 2): " app_type
 
         if [ "$app_type" == "1" ]; then
             cat > "$NGINX_PROXY_DIR/$DOMAIN/$PPATH.conf" <<EOF
 location /$PPATH/ {
-    proxy_pass http://127.0.0.1:$PORT/;
+    proxy_pass [http://127.0.0.1](http://127.0.0.1):$PORT/;
     proxy_http_version 1.1;
     proxy_set_header Upgrade \$http_upgrade;
     proxy_set_header Connection "upgrade";
@@ -305,14 +305,28 @@ location /$PPATH/ {
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto \$scheme;
 
+    # --- Backend Framework Support (Python FastAPI, Flask, etc.) ---
+    proxy_set_header X-Forwarded-Prefix /$PPATH;
+    proxy_set_header X-Script-Name /$PPATH;
+
     proxy_redirect / /$PPATH/;
     proxy_cookie_path / /$PPATH/;
 
+    # --- Aggressive HTML/JS Sub-filter ---
     proxy_set_header Accept-Encoding "";
     sub_filter 'src="/' 'src="/$PPATH/';
     sub_filter 'href="/' 'href="/$PPATH/';
     sub_filter 'action="/' 'action="/$PPATH/';
     sub_filter 'url("/' 'url("/$PPATH/';
+    
+    # Common API calls in JS
+    sub_filter 'fetch("/' 'fetch("/$PPATH/';
+    sub_filter 'axios.get("/' 'axios.get("/$PPATH/';
+    sub_filter 'axios.post("/' 'axios.post("/$PPATH/';
+    sub_filter 'axios.put("/' 'axios.put("/$PPATH/';
+    sub_filter 'axios.delete("/' 'axios.delete("/$PPATH/';
+    sub_filter 'axios("/' 'axios("/$PPATH/';
+    
     sub_filter_once off;
     sub_filter_types text/html text/css text/javascript application/javascript application/json;
 }
@@ -320,7 +334,7 @@ EOF
         else
             cat > "$NGINX_PROXY_DIR/$DOMAIN/$PPATH.conf" <<EOF
 location /$PPATH/ {
-    proxy_pass http://127.0.0.1:$PORT;
+    proxy_pass [http://127.0.0.1](http://127.0.0.1):$PORT;
     proxy_http_version 1.1;
     proxy_set_header Upgrade \$http_upgrade;
     proxy_set_header Connection "upgrade";
