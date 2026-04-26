@@ -1,8 +1,5 @@
 #!/bin/bash
 
-# --- Fix Terminal Backspace Issue ---
-stty erase '^H' 2>/dev/null
-
 # --- Color & UI Definitions ---
 C_CYAN="\e[1;36m"
 C_BLUE="\e[1;34m"
