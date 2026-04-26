@@ -42,7 +42,7 @@ function install_nginx_ssl() {
     echo -e "${C_CYAN}│${C_RESET}         ${C_WHITE}Nginx & SSL Configuration${C_RESET}        ${C_CYAN}│${C_RESET}"
     echo -e "${C_CYAN}╰──────────────────────────────────────────╯${C_RESET}"
     
-    read -p "🔹 Enter Domain (e.g., example.com): " DOMAIN
+    read -ep "🔹 Enter Domain (e.g., example.com): " DOMAIN
     
     if ! command -v nginx &> /dev/null; then
         echo -e "${C_BLUE}❖ Installing Nginx...${C_RESET}"
@@ -56,7 +56,7 @@ function install_nginx_ssl() {
     SKIP_NGINX_OVERWRITE=0
     if [ -f "/etc/nginx/sites-available/$DOMAIN" ]; then
         echo -e "\n${C_YELLOW}⚠ WARNING: An Nginx configuration for '$DOMAIN' already exists!${C_RESET}"
-        read -p "Do you want to OVERWRITE the existing config? (y/N): " overwrite
+        read -ep "Do you want to OVERWRITE the existing config? (y/N): " overwrite
         if [[ "$overwrite" != "y" && "$overwrite" != "Y" ]]; then
             SKIP_NGINX_OVERWRITE=1
             echo -e "${C_GREEN}✔ Preserving existing Nginx configuration.${C_RESET}"
@@ -64,9 +64,9 @@ function install_nginx_ssl() {
     fi
 
     if [ $SKIP_NGINX_OVERWRITE -eq 0 ]; then
-        read -p "🔹 Enter HTTP Listen Port (Default: 80): " HTTP_PORT
+        read -ep "🔹 Enter HTTP Listen Port (Default: 80): " HTTP_PORT
         HTTP_PORT=${HTTP_PORT:-80}
-        read -p "🔹 Enter HTTPS Listen Port (Default: 443): " HTTPS_PORT
+        read -ep "🔹 Enter HTTPS Listen Port (Default: 443): " HTTPS_PORT
         HTTPS_PORT=${HTTPS_PORT:-443}
 
         echo -e "${C_BLUE}❖ Creating new Nginx HTTP block on port $HTTP_PORT...${C_RESET}"
@@ -94,7 +94,7 @@ EOF
     echo -e "  ${C_CYAN}2)${C_RESET} Acme.sh (Uses ZeroSSL to bypass Let's Encrypt Limits)"
     echo -e "  ${C_CYAN}3)${C_RESET} Manual SSL (Upload your own certs)"
     echo -e "  ${C_CYAN}4)${C_RESET} Skip SSL (HTTP Only)"
-    read -p "Choice (1/2/3/4): " ssl_choice
+    read -ep "Choice (1/2/3/4): " ssl_choice
 
     if [ "$ssl_choice" == "1" ]; then
         echo -e "${C_BLUE}❖ Installing Certbot...${C_RESET}"
@@ -142,8 +142,8 @@ EOF
         fi
     
     elif [ "$ssl_choice" == "3" ]; then
-        read -p "Enter path to Certificate (.cer/.crt/.pem): " CERT_PATH
-        read -p "Enter path to Private Key (.key): " KEY_PATH
+        read -ep "Enter path to Certificate (.cer/.crt/.pem): " CERT_PATH
+        read -ep "Enter path to Private Key (.key): " KEY_PATH
 
         if [[ -f "$CERT_PATH" && -f "$KEY_PATH" && $SKIP_NGINX_OVERWRITE -eq 0 ]]; then
             cat > /etc/nginx/sites-available/$DOMAIN <<EOF
@@ -165,7 +165,7 @@ EOF
     
     nginx -t && systemctl reload nginx
     echo ""
-    read -p "Press Enter to return to menu..."
+    read -ep "Press Enter to return to menu..."
 }
 
 # --- Global Domain & SSL Manager ---
@@ -186,14 +186,14 @@ function manage_domains() {
     done
 
     if [ ${#domains[@]} -eq 0 ]; then
-        echo -e "  ${C_YELLOW}No domains configured on this server yet.${C_RESET}"; echo ""; read -p "Press Enter..." ; return
+        echo -e "  ${C_YELLOW}No domains configured on this server yet.${C_RESET}"; echo ""; read -ep "Press Enter..." ; return
     fi
     
     echo -e "${C_CYAN}────────────────────────────────────────────${C_RESET}"
-    read -p "🔹 Enter a Domain to manage: " DOMAIN
+    read -ep "🔹 Enter a Domain to manage: " DOMAIN
     
     if [[ ! " ${domains[*]} " =~ " ${DOMAIN} " ]]; then
-        echo -e "${C_RED}✖ Domain not found in Nginx configs!${C_RESET}"; echo ""; read -p "Press Enter..." ; return
+        echo -e "${C_RED}✖ Domain not found in Nginx configs!${C_RESET}"; echo ""; read -ep "Press Enter..." ; return
     fi
     
     # Find exact config file for this domain
@@ -204,7 +204,7 @@ function manage_domains() {
     echo -e "  ${C_YELLOW}2)${C_RESET} Remove SSL Only (Downgrade to HTTP)"
     echo -e "  ${C_RED}3)${C_RESET} Completely Delete Domain Config (Destructive)"
     echo -e "  ${C_CYAN}0)${C_RESET} Back to Menu"
-    read -p "Choice: " action
+    read -ep "Choice: " action
     
     if [ "$action" == "1" ]; then
         echo -e "\n${C_BLUE}❖ Scanning SSL Status for $DOMAIN...${C_RESET}"
@@ -224,7 +224,7 @@ function manage_domains() {
         fi
         
     elif [ "$action" == "2" ]; then
-        read -p "Downgrade $DOMAIN to HTTP and remove SSL settings? (y/n): " confirm
+        read -ep "Downgrade $DOMAIN to HTTP and remove SSL settings? (y/n): " confirm
         if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
             echo -e "${C_BLUE}❖ Removing SSL configurations and files...${C_RESET}"
             
@@ -253,7 +253,7 @@ EOF
         fi
         
     elif [ "$action" == "3" ]; then
-        read -p "⚠ DESTRUCTIVE: Delete Nginx config file ($CONF_FILE) and SSLs for $DOMAIN? (y/n): " confirm
+        read -ep "⚠ DESTRUCTIVE: Delete Nginx config file ($CONF_FILE) and SSLs for $DOMAIN? (y/n): " confirm
         if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
             echo -e "${C_BLUE}❖ Removing Nginx configs...${C_RESET}"
             rm -f "$CONF_FILE"
@@ -267,7 +267,7 @@ EOF
             echo -e "${C_GREEN}✔ Domain $DOMAIN successfully removed from server!${C_RESET}"
         fi
     fi
-    echo ""; read -p "Press Enter to return to menu..."
+    echo ""; read -ep "Press Enter to return to menu..."
 }
 
 # --- Add Reverse Proxy ---
@@ -276,10 +276,10 @@ function add_proxy() {
     echo -e "${C_CYAN}│${C_RESET}            ${C_WHITE}Add Reverse Proxy${C_RESET}             ${C_CYAN}│${C_RESET}"
     echo -e "${C_CYAN}╰──────────────────────────────────────────╯${C_RESET}"
     
-    read -p "🔹 Enter Domain (e.g., example.com): " DOMAIN
-    read -p "🔹 Enter Internal App Port (e.g., 8080): " PORT
+    read -ep "🔹 Enter Domain (e.g., example.com): " DOMAIN
+    read -ep "🔹 Enter Internal App Port (e.g., 8080): " PORT
     echo -e "${C_YELLOW}Tip: For 100% bug-free apps, type '/' (Root). Sub-paths like 'panel' may break complex apps.${C_RESET}"
-    read -p "🔹 Enter Path: " PPATH
+    read -ep "🔹 Enter Path: " PPATH
     
     mkdir -p "$NGINX_PROXY_DIR/$DOMAIN"
     PPATH="${PPATH#/}"; PPATH="${PPATH%/}" 
@@ -302,7 +302,7 @@ EOF
         echo -e "\n${C_WHITE}What type of application is this?${C_RESET}"
         echo -e "  ${C_CYAN}1)${C_RESET} Black Hub / Custom App (Safe Routing + Upload Fixes)"
         echo -e "  ${C_CYAN}2)${C_RESET} X-UI Panel (Direct Pass - *Requires setting Base Path in X-UI*)"
-        read -p "Choice (1 or 2): " app_type
+        read -ep "Choice (1 or 2): " app_type
 
         if [ "$app_type" == "1" ]; then
             cat > "$NGINX_PROXY_DIR/$DOMAIN/$PPATH.conf" <<EOF
@@ -356,7 +356,7 @@ EOF
     else
         rm -f "$NGINX_PROXY_DIR/$DOMAIN/${PPATH:-root}.conf"
     fi
-    echo ""; read -p "Press Enter..."
+    echo ""; read -ep "Press Enter..."
 }
 
 # --- List Proxies ---
@@ -389,13 +389,13 @@ function list_proxies() {
         echo -e "  ${C_YELLOW}No external proxies found.${C_RESET}"
     fi
 
-    echo ""; read -p "Press Enter..."
+    echo ""; read -ep "Press Enter..."
 }
 
 # --- Remove Path ---
 function remove_proxy() {
-    read -p "🔹 Enter Domain: " DOMAIN
-    read -p "🔹 Enter Path to remove (Type 'root' for main proxy): " PPATH
+    read -ep "🔹 Enter Domain: " DOMAIN
+    read -ep "🔹 Enter Path to remove (Type 'root' for main proxy): " PPATH
     PPATH="${PPATH#/}"; PPATH="${PPATH%/}"; [ -z "$PPATH" ] && PPATH="root"
     if [ -f "$NGINX_PROXY_DIR/$DOMAIN/$PPATH.conf" ]; then
         rm "$NGINX_PROXY_DIR/$DOMAIN/$PPATH.conf"
@@ -403,12 +403,12 @@ function remove_proxy() {
     else
         echo -e "${C_RED}✖ Path configuration not found!${C_RESET}"
     fi
-    echo ""; read -p "Press Enter..."
+    echo ""; read -ep "Press Enter..."
 }
 
 # --- Deep Clean ---
 function uninstall_all() {
-    read -p "⚠ DESTRUCTIVE: Purge Nginx, SSL, and all Configs from Server? (y/n): " confirm
+    read -ep "⚠ DESTRUCTIVE: Purge Nginx, SSL, and all Configs from Server? (y/n): " confirm
     if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
         systemctl stop nginx 2>/dev/null; killall -9 nginx 2>/dev/null
         apt-get purge nginx nginx-common nginx-core certbot python3-certbot-nginx -y; apt-get autoremove -y
@@ -429,7 +429,7 @@ while true; do
     echo -e "  5 ➜ Remove a Specific Proxy Path"
     echo -e "  6 ➜ Danger: Deep Remove All"
     echo -e "  0 ➜ Exit"
-    read -p "  Select Option: " choice
+    read -ep "  Select Option: " choice
     case $choice in
         1) install_nginx_ssl ;; 2) add_proxy ;; 3) manage_domains ;; 4) list_proxies ;; 5) remove_proxy ;; 6) uninstall_all ;; 0) clear; exit 0 ;;
     esac
