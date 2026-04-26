@@ -302,7 +302,13 @@ location / {
 }
 EOF
     else
-        cat > "$NGINX_PROXY_DIR/$DOMAIN/$PPATH.conf" <<EOF
+        echo -e "\n${C_WHITE}What type of application is this?${C_RESET}"
+        echo -e "  ${C_CYAN}1)${C_RESET} Black Hub / Custom App (Safe Routing + Upload Fixes)"
+        echo -e "  ${C_CYAN}2)${C_RESET} X-UI Panel (Direct Pass - *Requires setting Base Path in X-UI*)"
+        read -p "Choice (1 or 2): " app_type
+
+        if [ "$app_type" == "1" ]; then
+            cat > "$NGINX_PROXY_DIR/$DOMAIN/$PPATH.conf" <<EOF
 location /$PPATH/ {
     client_max_body_size 0;
     proxy_pass http://127.0.0.1:$PORT/;
@@ -328,6 +334,22 @@ location /$PPATH/ {
     sub_filter_types text/html text/css application/javascript;
 }
 EOF
+        else
+            cat > "$NGINX_PROXY_DIR/$DOMAIN/$PPATH.conf" <<EOF
+location /$PPATH/ {
+    client_max_body_size 0;
+    proxy_pass http://127.0.0.1:$PORT;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+}
+EOF
+            echo -e "\n${C_YELLOW}⚠ IMPORTANT: For X-UI to work on /$PPATH/, you MUST log in via IP:PORT first and set 'Panel url root path' to '/$PPATH/' in the X-UI settings!${C_RESET}"
+        fi
         echo -e "\n${C_YELLOW}⚠ If your app has broken links or fails to upload on /$PPATH/, it means your app requires running on the ROOT path (/). Remove this path and add it as '/' instead!${C_RESET}"
     fi
     
