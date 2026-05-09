@@ -100,7 +100,7 @@ EOF
         echo -e "${C_BLUE}❖ Installing Certbot...${C_RESET}"
         apt install certbot python3-certbot-nginx -y
         if certbot --nginx -d $DOMAIN --non-interactive --agree-tos --register-unsafely-without-email; then
-            # BUG FIXED: Removed the duplicate sed injection here
+            sed -i '/server_name/a \    client_max_body_size 0;' /etc/nginx/sites-available/$DOMAIN
             echo -e "${C_GREEN}✔ Certbot SSL applied successfully!${C_RESET}"
         else
             echo -e "${C_RED}✖ Certbot failed! Check if your domain points to this server's IP and port 80 is free.${C_RESET}"
