@@ -1,5 +1,4 @@
 #!/bin/bash
-
 # --- Color & UI Definitions ---
 C_CYAN="\e[1;36m"
 C_BLUE="\e[1;34m"
@@ -11,24 +10,20 @@ C_RESET="\e[0m"
 
 # --- Root Access Check ---
 if [ "$EUID" -ne 0 ]; then
-  echo -e "${C_RED}✖ Please run this script as root.${C_RESET}"
-  exit 1
+    echo -e "${C_RED}✖ Please run this script as root.${C_RESET}"
+    exit 1
 fi
 
 # --- Global Command Setup ---
 COMMAND_PATH="/usr/local/bin/black-ssl"
-
 if [[ "$0" != "$COMMAND_PATH" && "$(basename "$0")" != "black-ssl" ]]; then
     echo -e "${C_BLUE}❖ Installing 'black-ssl' as a global command...${C_RESET}"
-    
     if ! cp "$0" "$COMMAND_PATH" 2>/dev/null; then
         RAW_URL="https://""raw.githubusercontent.com/saeederamy/black-ssl/refs/heads/main/install.sh"
         curl -Ls "$RAW_URL" -o "$COMMAND_PATH"
     fi
-    
     chmod +x "$COMMAND_PATH"
     ln -sf "$COMMAND_PATH" "/usr/bin/black-ssl"
-    
     echo -e "${C_GREEN}✔ Installed! Launching the panel...${C_RESET}"
     sleep 1
     exec "$COMMAND_PATH" "$@"
@@ -36,23 +31,51 @@ fi
 
 NGINX_PROXY_DIR="/etc/nginx/proxy.d"
 
+# === HELPER: De-duplicate client_max_body_size in one file ===
+function dedupe_client_max_body_size() {
+    local file="$1"
+    [ ! -f "$file" ] && return 1
+    awk '
+        /^[[:space:]]*server[[:space:]]*\{/ { in_block=1; seen=0; print; next }
+        /^[[:space:]]*\}/                   { in_block=0; seen=0; print; next }
+        {
+            stripped=$0
+            gsub(/^[ \t]+|[ \t]+$/, "", stripped)
+            if (in_block && stripped ~ /^client_max_body_size 0;$/) {
+                if (seen) next
+                seen=1
+            }
+            print
+        }
+    ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+}
+
+# === HELPER: Inject client_max_body_size only if NOT already there ===
+# This replaces the old `sed -i '/server_name/a client_max_body_size 0;'`
+# which added the line on every single run, causing the duplicate bug.
+function inject_directive_once() {
+    local file="$1"
+    [ ! -f "$file" ] && return 1
+    # If already present anywhere, do nothing.
+    if grep -qF "client_max_body_size 0;" "$file"; then
+        return 0
+    fi
+    sed -i '/server_name/a \    client_max_body_size 0;' "$file"
+}
+
 # --- Install Nginx & SSL ---
 function install_nginx_ssl() {
     echo -e "\n${C_CYAN}╭──────────────────────────────────────────╮${C_RESET}"
-    echo -e "${C_CYAN}│${C_RESET}         ${C_WHITE}Nginx & SSL Configuration${C_RESET}        ${C_CYAN}│${C_RESET}"
+    echo -e "${C_CYAN}│${C_RESET} ${C_WHITE}Nginx & SSL Configuration${C_RESET} ${C_CYAN}│${C_RESET}"
     echo -e "${C_CYAN}╰──────────────────────────────────────────╯${C_RESET}"
-    
     read -ep "🔹 Enter Domain (e.g., example.com): " DOMAIN
-    
     if ! command -v nginx &> /dev/null; then
         echo -e "${C_BLUE}❖ Installing Nginx...${C_RESET}"
         apt update && apt install nginx curl -y
     else
         echo -e "${C_GREEN}✔ Nginx is already installed.${C_RESET}"
     fi
-    
     mkdir -p "$NGINX_PROXY_DIR/$DOMAIN"
-    
     SKIP_NGINX_OVERWRITE=0
     if [ -f "/etc/nginx/sites-available/$DOMAIN" ]; then
         echo -e "\n${C_YELLOW}⚠ WARNING: An Nginx configuration for '$DOMAIN' already exists!${C_RESET}"
@@ -62,13 +85,11 @@ function install_nginx_ssl() {
             echo -e "${C_GREEN}✔ Preserving existing Nginx configuration.${C_RESET}"
         fi
     fi
-
     if [ $SKIP_NGINX_OVERWRITE -eq 0 ]; then
         read -ep "🔹 Enter HTTP Listen Port (Default: 80): " HTTP_PORT
         HTTP_PORT=${HTTP_PORT:-80}
         read -ep "🔹 Enter HTTPS Listen Port (Default: 443): " HTTPS_PORT
         HTTPS_PORT=${HTTPS_PORT:-443}
-
         echo -e "${C_BLUE}❖ Creating new Nginx HTTP block on port $HTTP_PORT...${C_RESET}"
         cat > /etc/nginx/sites-available/$DOMAIN <<EOF
 server {
@@ -76,7 +97,6 @@ server {
     server_name $DOMAIN;
     client_max_body_size 0;
     include $NGINX_PROXY_DIR/$DOMAIN/*.conf;
-    
     error_page 404 /custom_404.html;
     location = /custom_404.html {
         return 200 "Server is ready. Please add a proxy path.";
@@ -86,40 +106,37 @@ server {
 EOF
         ln -sf /etc/nginx/sites-available/$DOMAIN /etc/nginx/sites-enabled/
     fi
-    
     systemctl restart nginx
-
     echo -e "\n${C_WHITE}Choose SSL Provider:${C_RESET}"
-    echo -e "  ${C_CYAN}1)${C_RESET} Certbot (Recommended - *Requires port 80 to be open*)"
-    echo -e "  ${C_CYAN}2)${C_RESET} Acme.sh (Uses ZeroSSL to bypass Let's Encrypt Limits)"
-    echo -e "  ${C_CYAN}3)${C_RESET} Manual SSL (Upload your own certs)"
-    echo -e "  ${C_CYAN}4)${C_RESET} Skip SSL (HTTP Only)"
+    echo -e " ${C_CYAN}1)${C_RESET} Certbot (Recommended - *Requires port 80 to be open*)"
+    echo -e " ${C_CYAN}2)${C_RESET} Acme.sh (Uses ZeroSSL to bypass Let's Encrypt Limits)"
+    echo -e " ${C_CYAN}3)${C_RESET} Manual SSL (Upload your own certs)"
+    echo -e " ${C_CYAN}4)${C_RESET} Skip SSL (HTTP Only)"
     read -ep "Choice (1/2/3/4): " ssl_choice
-
     if [ "$ssl_choice" == "1" ]; then
         echo -e "${C_BLUE}❖ Installing Certbot...${C_RESET}"
         apt install certbot python3-certbot-nginx -y
         if certbot --nginx -d $DOMAIN --non-interactive --agree-tos --register-unsafely-without-email; then
-            sed -i '/server_name/a \    client_max_body_size 0;' /etc/nginx/sites-available/$DOMAIN
+            # FIX: only inject if not already there
+            inject_directive_once "/etc/nginx/sites-available/$DOMAIN"
+            # Belt-and-suspenders: clean any duplicates that may exist
+            dedupe_client_max_body_size "/etc/nginx/sites-available/$DOMAIN"
+            nginx -t && systemctl reload nginx
             echo -e "${C_GREEN}✔ Certbot SSL applied successfully!${C_RESET}"
         else
             echo -e "${C_RED}✖ Certbot failed! Check if your domain points to this server's IP and port 80 is free.${C_RESET}"
         fi
-    
     elif [ "$ssl_choice" == "2" ]; then
         echo -e "${C_BLUE}❖ Installing Acme.sh...${C_RESET}"
         ACME_URL="https://""get.acme.sh"
         curl -s "$ACME_URL" | sh
-        
         ~/.acme.sh/acme.sh --register-account -m "admin@$DOMAIN" --server zerossl
         ~/.acme.sh/acme.sh --set-default-ca --server zerossl
-        
         if ~/.acme.sh/acme.sh --issue -d $DOMAIN --nginx --server zerossl --force; then
             mkdir -p /etc/nginx/ssl
             ~/.acme.sh/acme.sh --install-cert -d $DOMAIN \
                 --key-file /etc/nginx/ssl/$DOMAIN.key \
                 --fullchain-file /etc/nginx/ssl/$DOMAIN.cer
-                
             if [[ -f "/etc/nginx/ssl/$DOMAIN.cer" && $SKIP_NGINX_OVERWRITE -eq 0 ]]; then
                 cat > /etc/nginx/sites-available/$DOMAIN <<EOF
 server { listen $HTTP_PORT; server_name $DOMAIN; return 301 https://\$host\$request_uri; }
@@ -140,11 +157,9 @@ EOF
         else
             echo -e "${C_RED}✖ Acme.sh failed to issue certificate!${C_RESET}"
         fi
-    
     elif [ "$ssl_choice" == "3" ]; then
         read -ep "Enter path to Certificate (.cer/.crt/.pem): " CERT_PATH
         read -ep "Enter path to Private Key (.key): " KEY_PATH
-
         if [[ -f "$CERT_PATH" && -f "$KEY_PATH" && $SKIP_NGINX_OVERWRITE -eq 0 ]]; then
             cat > /etc/nginx/sites-available/$DOMAIN <<EOF
 server { listen $HTTP_PORT; server_name $DOMAIN; return 301 https://\$host\$request_uri; }
@@ -162,7 +177,6 @@ EOF
             echo -e "${C_GREEN}✔ Custom SSL configured!${C_RESET}"
         fi
     fi
-    
     nginx -t && systemctl reload nginx
     echo ""
     read -ep "Press Enter to return to menu..."
@@ -171,76 +185,58 @@ EOF
 # --- Global Domain & SSL Manager ---
 function manage_domains() {
     echo -e "\n${C_CYAN}╭──────────────────────────────────────────╮${C_RESET}"
-    echo -e "${C_CYAN}│${C_RESET}     ${C_WHITE}Global Domain & SSL Manager${C_RESET}          ${C_CYAN}│${C_RESET}"
+    echo -e "${C_CYAN}│${C_RESET} ${C_WHITE}Global Domain & SSL Manager${C_RESET} ${C_CYAN}│${C_RESET}"
     echo -e "${C_CYAN}╰──────────────────────────────────────────╯${C_RESET}"
-    
     local domains=()
     echo -e "${C_BLUE}❖ Active Domains (Scanned from ALL Nginx configs):${C_RESET}"
-    
-    # Advanced Scan: Find all server_names in Nginx
     for d in $(grep -hRoP 'server_name\s+\K[a-zA-Z0-9.-]+' /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null | tr -d ';' | sort -u); do
         if [[ "$d" != "_" && "$d" != "localhost" ]]; then
             domains+=("$d")
             echo -e "  ${C_GREEN}▶ $d${C_RESET}"
         fi
     done
-
     if [ ${#domains[@]} -eq 0 ]; then
         echo -e "  ${C_YELLOW}No domains configured on this server yet.${C_RESET}"; echo ""; read -ep "Press Enter..." ; return
     fi
-    
     echo -e "${C_CYAN}────────────────────────────────────────────${C_RESET}"
     read -ep "🔹 Enter a Domain to manage: " DOMAIN
-    
     if [[ ! " ${domains[*]} " =~ " ${DOMAIN} " ]]; then
         echo -e "${C_RED}✖ Domain not found in Nginx configs!${C_RESET}"; echo ""; read -ep "Press Enter..." ; return
     fi
-    
-    # Find exact config file for this domain
     CONF_FILE=$(grep -RlP "server_name\s+.*$DOMAIN" /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null | head -n 1)
-    
     echo -e "\n${C_WHITE}What do you want to do with $DOMAIN?${C_RESET}"
-    echo -e "  ${C_CYAN}1)${C_RESET} Check SSL Status & View Paths"
-    echo -e "  ${C_YELLOW}2)${C_RESET} Remove SSL Only (Downgrade to HTTP)"
-    echo -e "  ${C_RED}3)${C_RESET} Completely Delete Domain Config (Destructive)"
-    echo -e "  ${C_CYAN}0)${C_RESET} Back to Menu"
+    echo -e " ${C_CYAN}1)${C_RESET} Check SSL Status & View Paths"
+    echo -e " ${C_YELLOW}2)${C_RESET} Remove SSL Only (Downgrade to HTTP)"
+    echo -e " ${C_RED}3)${C_RESET} Completely Delete Domain Config (Destructive)"
+    echo -e " ${C_CYAN}0)${C_RESET} Back to Menu"
     read -ep "Choice: " action
-    
     if [ "$action" == "1" ]; then
         echo -e "\n${C_BLUE}❖ Scanning SSL Status for $DOMAIN...${C_RESET}"
         echo -e "${C_WHITE}Nginx Config File:${C_RESET} $CONF_FILE"
-        
         cert_path=$(grep -m 1 "ssl_certificate " "$CONF_FILE" | awk '{print $2}' | tr -d ';')
         key_path=$(grep -m 1 "ssl_certificate_key " "$CONF_FILE" | awk '{print $2}' | tr -d ';')
-        
         if [[ -n "$cert_path" && -f "$cert_path" ]]; then
-             echo -e "${C_GREEN}✔ SSL Detected in Config!${C_RESET}"
-             echo -e "${C_WHITE}Certificate Path:${C_RESET} $cert_path"
-             echo -e "${C_WHITE}Private Key Path:${C_RESET} $key_path"
-             echo -e "${C_YELLOW}Expiration Details:${C_RESET}"
-             openssl x509 -enddate -noout -in "$cert_path"
+            echo -e "${C_GREEN}✔ SSL Detected in Config!${C_RESET}"
+            echo -e "${C_WHITE}Certificate Path:${C_RESET} $cert_path"
+            echo -e "${C_WHITE}Private Key Path:${C_RESET} $key_path"
+            echo -e "${C_YELLOW}Expiration Details:${C_RESET}"
+            openssl x509 -enddate -noout -in "$cert_path"
         else
-             echo -e "${C_YELLOW}⚠ No active SSL certificate found in the Nginx configuration for $DOMAIN.${C_RESET}"
+            echo -e "${C_YELLOW}⚠ No active SSL certificate found in the Nginx configuration for $DOMAIN.${C_RESET}"
         fi
-        
     elif [ "$action" == "2" ]; then
         read -ep "Downgrade $DOMAIN to HTTP and remove SSL settings? (y/n): " confirm
         if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
             echo -e "${C_BLUE}❖ Removing SSL configurations and files...${C_RESET}"
-            
             EXTRACTED_PORT=$(grep -m 1 -E 'listen [0-9]+;' "$CONF_FILE" | grep -v 'ssl' | awk '{print $2}' | tr -d ';' || echo 80)
-            
             if command -v certbot &> /dev/null; then certbot delete --cert-name "$DOMAIN" --non-interactive 2>/dev/null; fi
             if [ -f ~/.acme.sh/acme.sh ]; then ~/.acme.sh/acme.sh --remove -d "$DOMAIN" 2>/dev/null; rm -rf "/etc/nginx/ssl/$DOMAIN"* 2>/dev/null; fi
-            
-            # Create a clean HTTP-only block
             cat > "$CONF_FILE" <<EOF
 server {
     listen $EXTRACTED_PORT;
     server_name $DOMAIN;
     client_max_body_size 0;
     include $NGINX_PROXY_DIR/$DOMAIN/*.conf;
-    
     error_page 404 /custom_404.html;
     location = /custom_404.html {
         return 200 "Server is ready. Please add a proxy path.";
@@ -251,7 +247,6 @@ EOF
             nginx -t && systemctl reload nginx
             echo -e "${C_GREEN}✔ SSL removed successfully. Domain $DOMAIN is now HTTP-only!${C_RESET}"
         fi
-        
     elif [ "$action" == "3" ]; then
         read -ep "⚠ DESTRUCTIVE: Delete Nginx config file ($CONF_FILE) and SSLs for $DOMAIN? (y/n): " confirm
         if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
@@ -259,10 +254,8 @@ EOF
             rm -f "$CONF_FILE"
             rm -f "/etc/nginx/sites-available/$DOMAIN"
             rm -rf "/etc/nginx/proxy.d/$DOMAIN"
-            
             if command -v certbot &> /dev/null; then certbot delete --cert-name "$DOMAIN" --non-interactive 2>/dev/null; fi
             if [ -f ~/.acme.sh/acme.sh ]; then ~/.acme.sh/acme.sh --remove -d "$DOMAIN" 2>/dev/null; rm -rf "/etc/nginx/ssl/$DOMAIN"* 2>/dev/null; fi
-            
             systemctl reload nginx
             echo -e "${C_GREEN}✔ Domain $DOMAIN successfully removed from server!${C_RESET}"
         fi
@@ -273,17 +266,14 @@ EOF
 # --- Add Reverse Proxy ---
 function add_proxy() {
     echo -e "\n${C_CYAN}╭──────────────────────────────────────────╮${C_RESET}"
-    echo -e "${C_CYAN}│${C_RESET}            ${C_WHITE}Add Reverse Proxy${C_RESET}             ${C_CYAN}│${C_RESET}"
+    echo -e "${C_CYAN}│${C_RESET} ${C_WHITE}Add Reverse Proxy${C_RESET} ${C_CYAN}│${C_RESET}"
     echo -e "${C_CYAN}╰──────────────────────────────────────────╯${C_RESET}"
-    
     read -ep "🔹 Enter Domain (e.g., example.com): " DOMAIN
     read -ep "🔹 Enter Internal App Port (e.g., 8080): " PORT
     echo -e "${C_YELLOW}Tip: For 100% bug-free apps, type '/' (Root). Sub-paths like 'panel' may break complex apps.${C_RESET}"
     read -ep "🔹 Enter Path: " PPATH
-    
     mkdir -p "$NGINX_PROXY_DIR/$DOMAIN"
-    PPATH="${PPATH#/}"; PPATH="${PPATH%/}" 
-    
+    PPATH="${PPATH#/}"; PPATH="${PPATH%/}"
     if [ -z "$PPATH" ]; then
         cat > "$NGINX_PROXY_DIR/$DOMAIN/root.conf" <<EOF
 location / {
@@ -300,10 +290,9 @@ location / {
 EOF
     else
         echo -e "\n${C_WHITE}What type of application is this?${C_RESET}"
-        echo -e "  ${C_CYAN}1)${C_RESET} Black Hub / Custom App (Safe Routing + Upload Fixes)"
-        echo -e "  ${C_CYAN}2)${C_RESET} X-UI Panel (Direct Pass - *Requires setting Base Path in X-UI*)"
+        echo -e " ${C_CYAN}1)${C_RESET} Black Hub / Custom App (Safe Routing + Upload Fixes)"
+        echo -e " ${C_CYAN}2)${C_RESET} X-UI Panel (Direct Pass - *Requires setting Base Path in X-UI*)"
         read -ep "Choice (1 or 2): " app_type
-
         if [ "$app_type" == "1" ]; then
             cat > "$NGINX_PROXY_DIR/$DOMAIN/$PPATH.conf" <<EOF
 location /$PPATH/ {
@@ -312,17 +301,13 @@ location /$PPATH/ {
     proxy_http_version 1.1;
     proxy_set_header Upgrade \$http_upgrade;
     proxy_set_header Connection "upgrade";
-    
     proxy_set_header Host \$host;
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto \$scheme;
     proxy_set_header X-Forwarded-Prefix /$PPATH;
-
     proxy_redirect / /$PPATH/;
     proxy_cookie_path / /$PPATH/;
-
-    # Standard safe HTML rewrites only
     proxy_set_header Accept-Encoding "";
     sub_filter '<head>' '<head><base href="/$PPATH/">';
     sub_filter 'src="/' 'src="/$PPATH/';
@@ -349,7 +334,6 @@ EOF
         fi
         echo -e "\n${C_YELLOW}⚠ If your app has broken links or fails to upload on /$PPATH/, it means your app requires running on the ROOT path (/). Remove this path and add it as '/' instead!${C_RESET}"
     fi
-    
     if nginx -t; then
         systemctl reload nginx
         echo -e "\n${C_GREEN}✔ Success!${C_RESET}"
@@ -359,17 +343,16 @@ EOF
     echo ""; read -ep "Press Enter..."
 }
 
-# --- List Proxies ---
+# --- List Proxies (UNCHANGED from working version) ---
 function list_proxies() {
     echo -e "\n${C_CYAN}╭──────────────────────────────────────────╮${C_RESET}"
-    echo -e "${C_CYAN}│${C_RESET}       ${C_WHITE}List All Configured Proxies${C_RESET}        ${C_CYAN}│${C_RESET}"
+    echo -e "${C_CYAN}│${C_RESET} ${C_WHITE}List All Configured Proxies${C_RESET} ${C_CYAN}│${C_RESET}"
     echo -e "${C_CYAN}╰──────────────────────────────────────────╯${C_RESET}"
-    
     echo -e "\n${C_BLUE}❖ Script Managed Proxies (proxy.d):${C_RESET}"
     if [ -d "$NGINX_PROXY_DIR" ]; then
         for domain_path in "$NGINX_PROXY_DIR"/*; do
             DOMAIN=$(basename "$domain_path")
-            echo -e " ${C_GREEN}▶ $DOMAIN${C_RESET}"
+            echo -e "  ${C_GREEN}▶ $DOMAIN${C_RESET}"
             for conf_file in "$domain_path"/*.conf; do
                 [ -e "$conf_file" ] || continue
                 PPATH=$(basename "$conf_file" .conf)
@@ -380,15 +363,13 @@ function list_proxies() {
             done
         done
     fi
-
     echo -e "\n${C_BLUE}❖ Externally Managed Proxies (Found in Nginx Configs):${C_RESET}"
     EXTERNAL_PROXIES=$(grep -RnE "^\s*proxy_pass" /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null | grep -v "$NGINX_PROXY_DIR")
     if [ -n "$EXTERNAL_PROXIES" ]; then
-        echo "$EXTERNAL_PROXIES" | awk -F':' '{print "  ├─ File: " $1 " ➔ " $3":"$4}' | sed 's/;//g'
+        echo "$EXTERNAL_PROXIES" | awk -F':' '{print "    ├─ File: " $1 " ➔ " $3":"$4}' | sed 's/;//g'
     else
         echo -e "  ${C_YELLOW}No external proxies found.${C_RESET}"
     fi
-
     echo ""; read -ep "Press Enter..."
 }
 
@@ -402,6 +383,47 @@ function remove_proxy() {
         systemctl reload nginx; echo -e "${C_GREEN}✔ Removed.${C_RESET}"
     else
         echo -e "${C_RED}✖ Path configuration not found!${C_RESET}"
+    fi
+    echo ""; read -ep "Press Enter..."
+}
+
+# --- NEW: Repair Tool (only fixes the duplicate bug) ---
+function repair_configs() {
+    echo -e "\n${C_CYAN}╭──────────────────────────────────────────╮${C_RESET}"
+    echo -e "${C_CYAN}│${C_RESET} ${C_WHITE}Repair Nginx Configs${C_RESET}        ${C_CYAN}│${C_RESET}"
+    echo -e "${C_CYAN}╰──────────────────────────────────────────╯${C_RESET}"
+    echo -e "\nThis removes duplicate ${C_YELLOW}client_max_body_size 0;${C_RESET} lines"
+    echo -e "from all Nginx configs (the bug where the line keeps doubling)."
+    echo ""
+    read -ep "Continue? (y/N): " ok
+    [[ "$ok" != "y" && "$ok" != "Y" ]] && return
+
+    local fixed=0
+    for f in /etc/nginx/sites-available/* /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*.conf; do
+        [ -f "$f" ] || continue
+        local before
+        before=$(grep -c "client_max_body_size" "$f" 2>/dev/null)
+        before=${before:-0}
+        dedupe_client_max_body_size "$f"
+        local after
+        after=$(grep -c "client_max_body_size" "$f" 2>/dev/null)
+        after=${after:-0}
+        if [ "$before" -gt "$after" ]; then
+            echo -e "  ${C_GREEN}✔${C_RESET} $f  ($before → $after)"
+            fixed=$((fixed+1))
+        fi
+    done
+
+    if [ "$fixed" -eq 0 ]; then
+        echo -e "${C_GREEN}✔ No duplicates found. All clean!${C_RESET}"
+    else
+        echo -e "\n${C_GREEN}Fixed $fixed file(s).${C_RESET}"
+        if nginx -t; then
+            systemctl reload nginx
+            echo -e "${C_GREEN}✔ Nginx reloaded.${C_RESET}"
+        else
+            echo -e "${C_RED}✖ Nginx test failed! Check with: nginx -t${C_RESET}"
+        fi
     fi
     echo ""; read -ep "Press Enter..."
 }
@@ -420,17 +442,25 @@ function uninstall_all() {
 while true; do
     clear
     echo -e "${C_CYAN} ╭──────────────────────────────────────────────╮"
-    echo -e " │        ${C_WHITE}✨ BLACK SSL MANAGER ✨${C_CYAN}               │"
-    echo -e " ╰──────────────────────────────────────────────╯${C_RESET}"
+    echo -e "  │           ${C_WHITE}✨ BLACK SSL MANAGER ✨${C_CYAN}            │"
+    echo -e "  ╰──────────────────────────────────────────────╯${C_RESET}"
     echo -e "  1 ➜ Install Nginx & Setup Domain"
     echo -e "  2 ➜ Add Reverse Proxy (Port ➔ Path)"
     echo -e "  3 ➜ Global Domain & SSL Manager (Scan/Check/Remove)"
     echo -e "  4 ➜ List All Proxies (Internal & External)"
     echo -e "  5 ➜ Remove a Specific Proxy Path"
+    echo -e "  ${C_YELLOW}7 ➜ Repair Configs (Fix client_max_body_size duplicates)${C_RESET}"
     echo -e "  6 ➜ Danger: Deep Remove All"
     echo -e "  0 ➜ Exit"
     read -ep "  Select Option: " choice
     case $choice in
-        1) install_nginx_ssl ;; 2) add_proxy ;; 3) manage_domains ;; 4) list_proxies ;; 5) remove_proxy ;; 6) uninstall_all ;; 0) clear; exit 0 ;;
+        1) install_nginx_ssl ;;
+        2) add_proxy ;;
+        3) manage_domains ;;
+        4) list_proxies ;;
+        5) remove_proxy ;;
+        6) uninstall_all ;;
+        7) repair_configs ;;
+        0) clear; exit 0 ;;
     esac
 done
